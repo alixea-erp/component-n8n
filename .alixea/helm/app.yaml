@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  labels:
+    app: app
+spec:
+  selector:
+    matchLabels:
+      app: app
+  strategy:
+  {{- if eq .Values.stage "development"}}
+    type: Recreate
+  {{- else }}
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  {{- end }}
+  replicas: {{ ternary 1 0 .Values.enabled }}
+  template:
+    metadata:
+      labels:
+        app: app
+    spec:
+      terminationGracePeriodSeconds: 10
+      imagePullSecrets:
+        - name: alixea-pull-secret
+      containers:
+        - name: app
+          image: n8nio/n8n:2.47.7
+          imagePullPolicy: IfNotPresent
+          # n8n needs its database, which the setup container creates. tini and the entrypoint are the image's own.
+          command: ['tini', '--', '/bin/sh', '-c', 'until [ -f /alixea-state/database-ready ]; do sleep 1; done; exec /docker-entrypoint.sh']
+          ports:
+            - containerPort: 5678
+          env:
+            {{- range .Values.env }}
+            - name: {{ .identifier }}
+              value: {{ .value | quote }}
+            {{- end }}
+          # The first start migrates the database, which takes minutes on a small core
+          startupProbe:
+            httpGet:
+              path: /healthz/readiness
+              port: 5678
+            periodSeconds: 5
+            failureThreshold: 120
+          volumeMounts:
+            - name: state
+              mountPath: /alixea-state
+        # Runs the Code node's JavaScript and Python, which n8n hands it on 127.0.0.1:5679. Only the token, so that code
+        # in a Code node cannot read the deployment's other variables. Keep the tag at the n8n version above.
+        - name: runners
+          image: n8nio/runners:2.47.7
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: N8N_RUNNERS_AUTH_TOKEN
+              value: {{ .Values.envMap.N8N_RUNNERS_AUTH_TOKEN.value | quote }}
+        # Creates the database, sets n8n up on its first start and gives the prompt tab's agent and the AI nodes access, then waits
+        - name: setup
+          image: alpine:3.24
+          imagePullPolicy: IfNotPresent
+          command: ['/bin/sh', '/alixea/setup.sh']
+          env:
+            {{- range .Values.env }}
+            - name: {{ .identifier }}
+              value: {{ .value | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: scripts
+              mountPath: /alixea
+              readOnly: true
+            - name: state
+              mountPath: /alixea-state
+      volumes:
+        - name: scripts
+          configMap:
+            name: app-scripts
+        - name: state
+          emptyDir: {}

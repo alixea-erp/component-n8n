@@ -1,0 +1,120 @@
+alixeaVersion: v1.0
+type: component
+name: n8n
+description: n8n, workflow automation
+
+supportsAdditionalHosts: { serviceName: 'app' }
+
+hosts:
+  - name: n8n
+    identifier: app
+    port: 5678
+
+# NOTE! No image is listed here: the platform watches a listed image and moves every deployment to a new build of its
+# tag by itself. These images are not ours, so the chart names them (.alixea/helm/app.yaml) and they change only with it
+images: []
+
+parameterGroups:
+  - name: Admin login
+    identifier: admin
+    description: The owner account created on the first start. Change both in n8n afterwards.
+    parameters:
+      - name: Email
+        identifier: INITIAL_ADMIN_EMAIL
+        defaultValue: admin@example.com
+        type: string
+      - name: Password
+        identifier: INITIAL_ADMIN_PASSWORD
+        # The trailing capital and digit meet n8n's password rule
+        defaultValue: '${generate-random-password:16}A0'
+        type: secret
+
+  - name: Database
+    identifier: postgres
+    description: n8n's own database on the PostgreSQL add-on
+    parameters:
+      - name: Database name
+        identifier: DB_POSTGRESDB_DATABASE
+        defaultValue: n8n
+        type: string
+
+  - name: Keys
+    identifier: config
+    description: Generated for this project. Never change it, n8n could no longer read the credentials it encrypted with it.
+    parameters:
+      - name: Encryption key
+        identifier: N8N_ENCRYPTION_KEY
+        defaultValue: '${generate-random-password:42}'
+        type: secret
+
+  - name: AI
+    identifier: ALIXEA_AI_ENABLED
+    description: The "Alixea AI" credential for AI nodes, through the Alixea AI proxy. Billed to your account as AI usage.
+    toggleable: true
+    defaultValue: true
+    parameters: []
+
+  - name: Prompt tab
+    identifier: ALIXEA_AGENT_ENABLED
+    description: Let the agent in the prompt tab use n8n's MCP server, as the owner
+    toggleable: true
+    defaultValue: true
+    parameters:
+      - name: Access token
+        description: The token the agent reaches the MCP server with. The platform adds it to the agent's requests.
+        identifier: N8N_AGENT_TOKEN
+        defaultValue: '${generate-random-bytes:32}'
+        type: secret
+
+environmentVariables:
+  - identifier: DB_TYPE
+    defaultValue: postgresdb
+  - identifier: DB_POSTGRESDB_SCHEMA
+    defaultValue: public
+  - identifier: TZ
+    defaultValue: UTC
+  - identifier: N8N_EDITOR_BASE_URL
+    defaultValue: '${APP_ENDPOINT}'
+  - identifier: N8N_WEBHOOK_URL
+    defaultValue: '${APP_ENDPOINT}'
+  - identifier: N8N_SAMESITE_COOKIE
+    defaultValue: none
+  - identifier: N8N_SECURE_COOKIE
+    defaultValue: true
+  - identifier: N8N_VERSION_NOTIFICATIONS_ENABLED
+    defaultValue: false
+  # n8n's MCP server limits requests per address, and every request of the prompt tab's agent comes from the platform's
+  - identifier: N8N_MCP_SERVER_RATE_LIMIT
+    defaultValue: 0
+  # The component has no volume: files go to PostgreSQL, and community nodes are installed again on every start
+  - identifier: N8N_DEFAULT_BINARY_DATA_MODE
+    defaultValue: database
+  - identifier: N8N_REINSTALL_MISSING_PACKAGES
+    defaultValue: true
+  # The Code node runs in the pod's runners container, which signs in to n8n with the token
+  - identifier: N8N_RUNNERS_MODE
+    defaultValue: external
+  - identifier: N8N_RUNNERS_AUTH_TOKEN
+    defaultValue: '${generate-random-bytes:32}'
+    type: secret
+  # The Alixea AI proxy, for the credential "Alixea AI"
+  - identifier: ALIXEA_AI_URL
+    defaultValue: '{alixea-ai-gateway-url}/anthropic'
+  - identifier: ALIXEA_AI_TOKEN
+    defaultValue: '{alixea-ai-gateway-token}'
+
+# n8n checks a key with the legacy prefix n8n_api_ against its table only. The setup container writes this one there.
+mcp:
+  - url: 'http://app.${ALIXEA_NAMESPACE}:5678/mcp-server/http'
+    headers:
+      Authorization: 'Bearer n8n_api_${N8N_AGENT_TOKEN}'
+
+dependencies:
+  - identifier: postgres
+    package: https://github.com/alixea-erp/addon-postgres#v18.7
+    env:
+      include:
+        - POSTGRES_HOST:DB_POSTGRESDB_HOST
+        - POSTGRES_PORT:DB_POSTGRESDB_PORT
+        - POSTGRES_USER:DB_POSTGRESDB_USER
+        - POSTGRES_PASSWORD:DB_POSTGRESDB_PASSWORD
